@@ -1,75 +1,5 @@
 #! /usr/bin/env python
 """
-This page is in the table of contents.
-Volumetric adds Adrian's extruder distance E value to the gcode movement lines, as described at:
-http://blog.reprap.org/2009/05/4d-printing.html
-
-and in Erik de Bruijn's conversion script page at:
-http://objects.reprap.org/wiki/3D-to-5D-Gcode.php
-
-The volumetric manual page is at:
-http://www.bitsfrombytes.com/wiki/index.php?title=Skeinforge_Volumetric
-
-==Operation==
-The default 'Activate Volumetric' checkbox is off.  When it is on, the functions described below will work, when it is off, the functions will not be called.
-
-==Settings==
-===Extrusion Distance Format Choice===
-Default is 'Absolute Extrusion Distance' because in Adrian's description the distance is absolute.  In future, because the relative distances are smaller than the cumulative absolute distances, hopefully the firmaware will be able to use relative distance.
-
-====Absolute Extrusion Distance====
-When selected, the extrusion distance output will be the total extrusion distance to that gcode line.
-
-====Relative Extrusion Distance====
-When selected, the extrusion distance output will be the extrusion distance from the last gcode line.
-
-===Extruder Retraction Speed===
-Default is 13.3 mm/s.
-
-Defines the extruder retraction feed rate.
-
-===Retraction Distance===
-Default is zero.
-
-Defines the retraction distance when the thread ends.
-
-===Restart Extra Distance===
-Default is zero.
-
-Defines the restart extra distance when the thread restarts.  The restart distance will be the retraction distance plus the restart extra distance.
-
-==Examples==
-The following examples volumetric the file Screw Holder Bottom.stl.  The examples are run in a terminal in the folder which contains Screw Holder Bottom.stl and volumetric.py.
-
-
-> python volumetric.py
-This brings up the volumetric dialog.
-
-
-> python volumetric.py Screw Holder Bottom.stl
-The volumetric tool is parsing the file:
-Screw Holder Bottom.stl
-..
-The volumetric tool has created the file:
-.. Screw Holder Bottom_volumetric.gcode
-
-
-> python
-Python 2.5.1 (r251:54863, Sep 22 2007, 01:43:31)
-[GCC 4.2.1 (SUSE Linux)] on linux2
-Type "help", "copyright", "credits" or "license" for more information.
->>> import volumetric
->>> volumetric.main()
-This brings up the volumetric dialog.
-
-
->>> volumetric.writeOutput('Screw Holder Bottom.stl')
-The volumetric tool is parsing the file:
-Screw Holder Bottom.stl
-..
-The volumetric tool has created the file:
-.. Screw Holder Bottom_volumetric.gcode
-
 """
 
 #Init has to be imported first because it has code to workaround the python bug where relative imports don't work if the module is imported as a main module.
@@ -96,11 +26,11 @@ __license__ = 'GPL 3.0'
 
 
 def getCraftedText( fileName, gcodeText = '', repository=None):
-	"Volumetric a gcode file or text."
+	"Volumetric 5D a gcode file or text."
 	return getCraftedTextFromText( archive.getTextIfEmpty(fileName, gcodeText), repository )
 
 def getCraftedTextFromText(gcodeText, repository=None):
-	"Volumetric a gcode text."
+	"Volumetric 5D a gcode text."
 	if gcodec.isProcedureDoneOrFileIsEmpty( gcodeText, 'volumetric'):
 		return gcodeText
 	if repository == None:
@@ -114,7 +44,7 @@ def getNewRepository():
 	return VolumetricRepository()
 
 def writeOutput(fileName=''):
-	"Volumetric a gcode file."
+	"Volumetric 5D a gcode file."
 	fileName = fabmetheus_interpret.getFirstTranslatorFileNameUnmodified(fileName)
 	if fileName != '':
 		skeinforge_craft.writeChainTextWithNounMessage( fileName, 'volumetric')
@@ -135,6 +65,10 @@ class VolumetricRepository:
 		self.extruderRetractionSpeed = settings.FloatSpin().getFromValue( 4.0, 'Extruder Retraction Speed (mm/s):', self, 34.0, 13.3 )
 		self.retractionDistance = settings.FloatSpin().getFromValue( 0.0, 'Retraction Distance (millimeters):', self, 100.0, 0.0 )
 		self.restartExtraDistance = settings.FloatSpin().getFromValue( 0.0, 'Restart Extra Distance (millimeters):', self, 100.0, 0.0 )
+		settings.LabelSeparator().getFromRepository(self)
+		settings.LabelDisplay().getFromName('- Filament Details -', self )
+		self.filamentWidth = settings.FloatSpin().getFromValue( 0, 'Filament Width (mm):', self, 6, 2.8 )
+		self.filamentContraction = settings.FloatSpin().getFromValue( -3, 'Filament Contraction (ratio out/in):', self, 3, 0.85 )
 		self.executeTitle = 'Volumetric'
 
 	def execute(self):
@@ -155,12 +89,16 @@ class VolumetricSkein:
 		self.oldLocation = None
 		self.operatingFlowRate = None
 		self.totalExtrusionDistance = 0.0
+		self.layerThickness = 0.0
+		self.perimeterWidth = 0.0
+		self.feedScale = 1.0
+		self.retractionLeft = 0.0
 
 	def addLinearMoveExtrusionDistanceLine( self, extrusionDistance ):
 		"Get the extrusion distance string from the extrusion distance."
 		self.distanceFeedRate.output.write('G1 F%s\n' % self.extruderRetractionSpeedMinuteString )
 		self.distanceFeedRate.output.write('G1%s\n' % self.getExtrusionDistanceStringFromExtrusionDistance( extrusionDistance ) )
-		self.distanceFeedRate.output.write('G1 F%s\n' % self.distanceFeedRate.getRounded( self.feedRateMinute ) )
+		self.distanceFeedRate.output.write('G1 F%s\n' % self.distanceFeedRate.getRounded( self.feedRateMinute, 4 ) )
 
 	def getCraftedGcode(self, gcodeText, repository):
 		"Parse gcode text and store the volumetric gcode."
@@ -209,7 +147,7 @@ class VolumetricSkein:
 			return ''
 		if distance <= 0.0:
 			return ''
-		return self.getExtrusionDistanceStringFromExtrusionDistance( self.flowRate * distance )
+		return self.getExtrusionDistanceStringFromExtrusionDistance( self.flowRate * self.feedScale * distance )
 
 	def getExtrusionDistanceStringFromExtrusionDistance( self, extrusionDistance ):
 		"Get the extrusion distance string from the extrusion distance."
@@ -227,12 +165,19 @@ class VolumetricSkein:
 			self.distanceFeedRate.parseSplitLine(firstWord, splitLine)
 			if firstWord == '(</extruderInitialization>)':
 				self.distanceFeedRate.addLine('(<procedureDone> volumetric </procedureDone>)')
+				self.feedScale = (self.layerThickness * self.perimeterWidth) / (math.pi * ((self.repository.filamentWidth.value / 2) * (self.repository.filamentWidth.value / 2)) * self.repository.filamentContraction.value)
 				return
 			elif firstWord == '(<operatingFeedRatePerSecond>':
 				self.feedRateMinute = 60.0 * float(splitLine[1])
 			elif firstWord == '(<operatingFlowRate>':
 				self.operatingFlowRate = float(splitLine[1])
 				self.flowRate = self.operatingFlowRate
+			elif firstWord == '(<layerThickness>':
+				self.layerThickness = float(splitLine[1])
+			elif firstWord == '(<perimeterWidth>':
+				self.perimeterWidth = float(splitLine[1])
+				self.feedScale = (self.layerThickness * self.perimeterWidth) / (math.pi * ((self.repository.filamentWidth.value / 2) * (self.repository.filamentWidth.value / 2)) * self.repository.filamentContraction.value)
+				self.distanceFeedRate.addLine('(<feedrateScale> %s </feedrateScale>)' % self.distanceFeedRate.getRounded(self.feedScale))
 			self.distanceFeedRate.addLine(line)
 
 	def parseLine( self, lineIndex ):
@@ -256,11 +201,14 @@ class VolumetricSkein:
 				self.distanceFeedRate.addLine('G92 E0')
 				self.totalExtrusionDistance = 0.0
 			self.isExtruderActive = True
+			return
 		elif firstWord == 'M103':
 			self.addLinearMoveExtrusionDistanceLine( - self.repository.retractionDistance.value )
 			self.isExtruderActive = False
+			return
 		elif firstWord == 'M108':
 			self.flowRate = float( splitLine[1][1 :] )
+			return
 		self.distanceFeedRate.addLine(line)
 
 
