@@ -98,7 +98,7 @@ class VolumetricSkein:
 		"Get the extrusion distance string from the extrusion distance."
 		self.distanceFeedRate.output.write('G1 F%s\n' % self.extruderRetractionSpeedMinuteString )
 		self.distanceFeedRate.output.write('G1%s\n' % self.getExtrusionDistanceStringFromExtrusionDistance( extrusionDistance ) )
-		self.distanceFeedRate.output.write('G1 F%s\n' % self.distanceFeedRate.getRounded( self.feedRateMinute, 4 ) )
+		self.distanceFeedRate.output.write('G1 F%s\n' % self.distanceFeedRate.getRounded( self.feedRateMinute ) )
 
 	def getCraftedGcode(self, gcodeText, repository):
 		"Parse gcode text and store the volumetric gcode."
